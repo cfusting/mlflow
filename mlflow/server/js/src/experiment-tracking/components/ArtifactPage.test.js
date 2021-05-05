@@ -52,7 +52,6 @@ describe('ArtifactPage', () => {
               1,
               Stages.PRODUCTION,
               ModelVersionStatus.READY,
-              [],
             ),
           },
         },
@@ -89,6 +88,21 @@ describe('ArtifactPage', () => {
       </Provider>,
     );
     expect(wrapper.find('.Spinner').length).toBe(1);
+  });
+
+  test('should make correct number of API requests if artifact path specified in url', (done) => {
+    const mock = jest.fn();
+    const props = {
+      ...minimalProps,
+      apis: {},
+      listArtifactsApi: mock,
+      initialSelectedArtifactPath: 'some/test/directory/file',
+    };
+    wrapper = shallow(<ArtifactPageImpl {...props} />);
+    setImmediate(() => {
+      expect(mock.mock.calls.length).toBe(5);
+      done();
+    });
   });
 
   test('ArtifactPage renders error message when listArtifacts request fails', () => {

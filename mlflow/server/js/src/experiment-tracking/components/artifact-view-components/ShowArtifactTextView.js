@@ -1,7 +1,10 @@
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
 import { getSrc } from './ShowArtifactPage';
-import { getArtifactContent } from './ShowArtifactUtils';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { coy as style } from 'react-syntax-highlighter/dist/cjs/styles/prism';
+import { getLanguage } from '../../../common/utils/FileUtils';
+import { getArtifactContent } from '../../../common/utils/ArtifactUtils';
 import './ShowArtifactTextView.css';
 
 class ShowArtifactTextView extends Component {
@@ -47,14 +50,30 @@ class ShowArtifactTextView extends Component {
         </div>
       );
     } else {
+      const language = getLanguage(this.props.path);
+      const renderedContent = ShowArtifactTextView.prettifyText(language, this.state.text);
       return (
         <div className='ShowArtifactPage'>
           <div className='text-area-border-box'>
-            <textarea className={'text-area'} readOnly value={this.state.text} />
+            <SyntaxHighlighter language={language} style={style}>
+              {renderedContent}
+            </SyntaxHighlighter>
           </div>
         </div>
       );
     }
+  }
+
+  static prettifyText(language, rawText) {
+    if (language === 'json') {
+      try {
+        const parsedJson = JSON.parse(rawText);
+        return JSON.stringify(parsedJson, null, 2);
+      } catch (e) {
+        return rawText;
+      }
+    }
+    return rawText;
   }
 
   /** Fetches artifacts and updates component state with the result */

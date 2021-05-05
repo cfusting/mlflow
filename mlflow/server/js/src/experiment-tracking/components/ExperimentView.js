@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
@@ -10,33 +11,38 @@ import {
   getExperimentTags,
 } from '../reducers/Reducers';
 import { setExperimentTagApi } from '../actions';
-import { withRouter } from 'react-router-dom';
+// eslint-disable-next-line no-unused-vars
+import { Link, withRouter } from 'react-router-dom';
 import Routes from '../routes';
-import { Button, ButtonGroup, DropdownButton, MenuItem } from 'react-bootstrap';
+import { ButtonGroup } from 'react-bootstrap';
+import { Input, Button, Dropdown, Menu, Icon, Popover, Descriptions, Alert } from 'antd';
 import { Experiment, RunInfo } from '../sdk/MlflowMessages';
 import { saveAs } from 'file-saver';
 import { getLatestMetrics } from '../reducers/MetricReducer';
 import KeyFilter from '../utils/KeyFilter';
 import { ExperimentRunsTableMultiColumnView2 } from './ExperimentRunsTableMultiColumnView2';
 import ExperimentRunsTableCompactView from './ExperimentRunsTableCompactView';
-import { LIFECYCLE_FILTER } from './ExperimentPage';
+import { LIFECYCLE_FILTER, MODEL_VERSION_FILTER } from './ExperimentPage';
 import ExperimentViewUtil from './ExperimentViewUtil';
 import DeleteRunModal from './modals/DeleteRunModal';
 import RestoreRunModal from './modals/RestoreRunModal';
 import { NoteInfo, NOTE_CONTENT_TAG } from '../utils/NoteUtils';
 import LocalStorageUtils from '../../common/utils/LocalStorageUtils';
 import { ExperimentViewPersistedState } from '../sdk/MlflowLocalStorageMessages';
-import { Icon, Popover, Descriptions } from 'antd';
 import { CollapsibleSection } from '../../common/components/CollapsibleSection';
 import { EditableNote } from '../../common/components/EditableNote';
 import classNames from 'classnames';
 import Utils from '../../common/utils/Utils';
+import { CSSTransition } from 'react-transition-group';
 import { Spinner } from '../../common/components/Spinner';
 import { RunsTableColumnSelectionDropdown } from './RunsTableColumnSelectionDropdown';
-import _ from 'lodash';
 import { ColumnTypes } from '../constants';
 import { getUUID } from '../../common/utils/ActionUtils';
 import { IconButton } from '../../common/components/IconButton';
+import { ExperimentTrackingDocUrl, onboarding } from '../../common/constants';
+import filterIcon from '../../common/static/filter-icon.svg';
+import expandIcon from '../../common/static/expand-more.svg';
+import searchIcon from '../../common/static/search.svg';
 
 export const DEFAULT_EXPANDED_VALUE = false;
 
@@ -58,7 +64,8 @@ export class ExperimentView extends Component {
     this.initiateSearch = this.initiateSearch.bind(this);
     this.onDeleteRun = this.onDeleteRun.bind(this);
     this.onRestoreRun = this.onRestoreRun.bind(this);
-    this.onLifecycleFilterInput = this.onLifecycleFilterInput.bind(this);
+    this.handleLifecycleFilterInput = this.handleLifecycleFilterInput.bind(this);
+    this.handleModelVersionFilterInput = this.handleModelVersionFilterInput.bind(this);
     this.onCloseDeleteRunModal = this.onCloseDeleteRunModal.bind(this);
     this.onCloseRestoreRunModal = this.onCloseRestoreRunModal.bind(this);
     this.onExpand = this.onExpand.bind(this);
@@ -69,33 +76,37 @@ export class ExperimentView extends Component {
     this.handleCancelEditNote = this.handleCancelEditNote.bind(this);
     const store = ExperimentView.getLocalStore(this.props.experiment.experiment_id);
     const persistedState = new ExperimentViewPersistedState(store.loadComponentState());
+    const onboardingInformationStore = ExperimentView.getLocalStore(onboarding);
     this.state = {
       ...ExperimentView.getDefaultUnpersistedState(),
       persistedState: persistedState.toJSON(),
       showNotesEditor: false,
       showNotes: true,
+      showFilters: false,
+      showOnboardingHelper: onboardingInformationStore.getItem('showTrackingHelper') === null,
     };
   }
 
   static propTypes = {
     onSearch: PropTypes.func.isRequired,
-    runInfos: PropTypes.arrayOf(RunInfo).isRequired,
+    runInfos: PropTypes.arrayOf(PropTypes.instanceOf(RunInfo)).isRequired,
+    modelVersionsByRunUuid: PropTypes.object.isRequired,
     experiment: PropTypes.instanceOf(Experiment).isRequired,
     history: PropTypes.any,
 
     // List of all parameter keys available in the runs we're viewing
-    paramKeyList: PropTypes.arrayOf(String).isRequired,
+    paramKeyList: PropTypes.arrayOf(PropTypes.string).isRequired,
     // List of all metric keys available in the runs we're viewing
-    metricKeyList: PropTypes.arrayOf(String).isRequired,
+    metricKeyList: PropTypes.arrayOf(PropTypes.string).isRequired,
 
     // List of list of params in all the visible runs
-    paramsList: PropTypes.arrayOf(Array).isRequired,
+    paramsList: PropTypes.arrayOf(PropTypes.arrayOf(PropTypes.object)).isRequired,
     // List of list of metrics in all the visible runs
-    metricsList: PropTypes.arrayOf(Array).isRequired,
+    metricsList: PropTypes.arrayOf(PropTypes.arrayOf(PropTypes.object)).isRequired,
     // List of tags dictionary in all the visible runs.
-    tagsList: PropTypes.arrayOf(Object).isRequired,
+    tagsList: PropTypes.arrayOf(PropTypes.object).isRequired,
     // Object of experiment tags
-    experimentTags: PropTypes.instanceOf(Object).isRequired,
+    experimentTags: PropTypes.object.isRequired,
 
     // Input to the paramKeyFilter field
     paramKeyFilter: PropTypes.instanceOf(KeyFilter).isRequired,
@@ -104,6 +115,7 @@ export class ExperimentView extends Component {
 
     // Input to the lifecycleFilter field
     lifecycleFilter: PropTypes.string.isRequired,
+    modelVersionFilter: PropTypes.string.isRequired,
 
     orderByKey: PropTypes.string,
     orderByAsc: PropTypes.bool.isRequired,
@@ -112,11 +124,13 @@ export class ExperimentView extends Component {
     searchInput: PropTypes.string.isRequired,
     searchRunsError: PropTypes.string,
     isLoading: PropTypes.bool.isRequired,
-
-    nextPageToken: PropTypes.string,
+    numRunsFromLatestSearch: PropTypes.number,
     handleLoadMoreRuns: PropTypes.func.isRequired,
     loadingMore: PropTypes.bool.isRequired,
     setExperimentTagApi: PropTypes.func.isRequired,
+
+    // If child runs should be nested under their parents
+    nestChildren: PropTypes.bool,
   };
 
   /** Returns default values for state attributes that aren't persisted in local storage. */
@@ -133,6 +147,8 @@ export class ExperimentView extends Component {
       metricKeyFilterInput: '',
       // Lifecycle stage of runs to display
       lifecycleFilterInput: '',
+      // Whether to show models with linked model versions
+      modelVersionInput: '',
       // Text entered into the runs-search field
       searchInput: '',
       // String error message, if any, from an attempted search
@@ -212,7 +228,13 @@ export class ExperimentView extends Component {
         newRunsSelected[rInfo.run_uuid] = prevRunSelected;
       }
     });
-    const { searchInput, paramKeyFilter, metricKeyFilter, lifecycleFilter } = nextProps;
+    const {
+      searchInput,
+      paramKeyFilter,
+      metricKeyFilter,
+      lifecycleFilter,
+      modelVersionFilter,
+    } = nextProps;
     const paramKeyFilterInput = paramKeyFilter.getFilterString();
     const metricKeyFilterInput = metricKeyFilter.getFilterString();
     return {
@@ -221,6 +243,7 @@ export class ExperimentView extends Component {
       paramKeyFilterInput,
       metricKeyFilterInput,
       lifecycleFilterInput: lifecycleFilter,
+      modelVersionInput: modelVersionFilter,
       runsSelected: newRunsSelected,
     };
   }
@@ -232,6 +255,11 @@ export class ExperimentView extends Component {
         showMultiColumns: value,
       }).toJSON(),
     });
+  }
+
+  disableOnboardingHelper() {
+    const onboardingInformationStore = ExperimentView.getLocalStore(onboarding);
+    onboardingInformationStore.setItem('showTrackingHelper', 'false');
   }
 
   onDeleteRun() {
@@ -343,20 +371,64 @@ export class ExperimentView extends Component {
     return _.difference(keyList, categorizedUncheckedKeys[columnType]);
   }
 
+  renderArtifactLocation() {
+    const { artifact_location } = this.props.experiment;
+    return <Descriptions.Item label='Artifact Location'>{artifact_location}</Descriptions.Item>;
+  }
+
+  renderOnboardingContent() {
+    const learnMoreLinkUrl = ExperimentView.getLearnMoreLinkUrl();
+    const content = (
+      <div>
+        Track machine learning training runs in an experiment.{' '}
+        <a href={learnMoreLinkUrl} target='_blank' rel='noopener noreferrer' className='LinkColor'>
+          Learn more
+        </a>
+      </div>
+    );
+
+    return this.state.showOnboardingHelper ? (
+      <Alert
+        className='information'
+        description={content}
+        type='info'
+        showIcon
+        closable
+        onClose={() => this.disableOnboardingHelper()}
+      />
+    ) : null;
+  }
+
+  static getLearnMoreLinkUrl = () => ExperimentTrackingDocUrl;
+  getModelVersionMenuItem(key, data_test_id) {
+    return (
+      <Menu.Item
+        data-test-id={data_test_id}
+        active={this.state.modelVersionInput === key}
+        onSelect={this.handleModelVersionFilterInput}
+        key={key}
+      >
+        {key}
+      </Menu.Item>
+    );
+  }
+
   render() {
     const {
       runInfos,
       isLoading,
       loadingMore,
-      nextPageToken,
+      numRunsFromLatestSearch,
       handleLoadMoreRuns,
       experimentTags,
       experiment,
       tagsList,
       paramKeyList,
       metricKeyList,
+      orderByKey,
+      nestChildren,
     } = this.props;
-    const { experiment_id, name, artifact_location } = experiment;
+    const { experiment_id, name } = experiment;
     const { persistedState } = this.state;
     const { unbaggedParams, unbaggedMetrics, categorizedUncheckedKeys } = persistedState;
 
@@ -397,10 +469,13 @@ export class ExperimentView extends Component {
           onClose={this.onCloseRestoreRunModal}
           selectedRunIds={Object.keys(this.state.runsSelected)}
         />
-        <h1>{name}</h1>
+        <h1>
+          <span className='truncate-text single-line breadcrumb-title'>{name}</span>
+        </h1>
+        {this.renderOnboardingContent()}
         <Descriptions className='metadata-list'>
           <Descriptions.Item label='Experiment ID'>{experiment_id}</Descriptions.Item>
-          <Descriptions.Item label='Artifact Location'>{artifact_location}</Descriptions.Item>
+          {this.renderArtifactLocation()}
         </Descriptions>
         <div className='ExperimentView-info'>{this.renderNoteSection(noteInfo)}</div>
         <div className='ExperimentView-runs runs-table-flex-container'>
@@ -415,14 +490,15 @@ export class ExperimentView extends Component {
                 <div className='ExperimentView-search-input'>
                   <label className='filter-label'>Search Runs:</label>
                   <div className='filter-wrapper'>
-                    <input
-                      className='ExperimentView-searchInput'
-                      aria-label='search runs'
+                    <Input
+                      className='ExperimentView-searchBox'
+                      aria-label='Search Runs'
                       type='text'
                       placeholder={
                         'metrics.rmse < 1 and params.model = "tree" and ' +
                         'tags.mlflow.source.type = "LOCAL"'
                       }
+                      prefix={<img src={searchIcon} alt='Search' />}
                       value={this.state.searchInput}
                       onChange={this.onSearchInput}
                     />
@@ -439,53 +515,106 @@ export class ExperimentView extends Component {
                     theme='filled'
                   />
                 </Popover>
-                <div className='ExperimentView-lifecycle-input'>
-                  <label className='filter-label' style={styles.lifecycleButtonLabel}>
-                    State:
-                  </label>
-                  <div className='filter-wrapper' style={styles.lifecycleButtonFilterWrapper}>
-                    <DropdownButton
-                      id={'ExperimentView-lifecycle-button-id'}
-                      className='ExperimentView-lifecycle-button'
-                      key={this.state.lifecycleFilterInput}
-                      bsStyle='default'
-                      title={this.state.lifecycleFilterInput}
-                    >
-                      <MenuItem
-                        active={this.state.lifecycleFilterInput === LIFECYCLE_FILTER.ACTIVE}
-                        onSelect={this.onLifecycleFilterInput}
-                        eventKey={LIFECYCLE_FILTER.ACTIVE}
-                      >
-                        {LIFECYCLE_FILTER.ACTIVE}
-                      </MenuItem>
-                      <MenuItem
-                        active={this.state.lifecycleFilterInput === LIFECYCLE_FILTER.DELETED}
-                        onSelect={this.onLifecycleFilterInput}
-                        eventKey={LIFECYCLE_FILTER.DELETED}
-                      >
-                        {LIFECYCLE_FILTER.DELETED}
-                      </MenuItem>
-                    </DropdownButton>
-                  </div>
+                <div className='search-control-btns'>
+                  <Button
+                    className='filter-button'
+                    onClick={() => this.setState({ showFilters: !this.state.showFilters })}
+                  >
+                    <img className='filterIcon' src={filterIcon} alt='Filter' />
+                    Filter
+                  </Button>
+                  <Button type='primary' className='search-button' onClick={this.onSearch}>
+                    Search
+                  </Button>
+                  <Button className='clear-button' onClick={this.onClear}>
+                    Clear
+                  </Button>
                 </div>
-                <button className='btn btn-primary search-button' onClick={this.onSearch}>
-                  Search
-                </button>
-                <button className='btn clear-button' onClick={this.onClear}>
-                  Clear
-                </button>
               </div>
             </div>
+            <CSSTransition
+              in={this.state.showFilters}
+              timeout={300}
+              classNames='lifecycleButtons'
+              unmountOnExit
+            >
+              <div className='ExperimentView-lifecycle-input'>
+                <div className='filter-wrapper' style={styles.lifecycleButtonFilterWrapper}>
+                  State:
+                  <Dropdown
+                    id='ExperimentView-lifecycle-button-id'
+                    className='ExperimentView-lifecycle-button'
+                    key={this.state.lifecycleFilterInput}
+                    title={this.state.lifecycleFilterInput}
+                    trigger={['click']}
+                    overlay={
+                      <Menu onClick={this.handleLifecycleFilterInput}>
+                        <Menu.Item
+                          data-test-id='active-runs-menu-item'
+                          active={this.state.lifecycleFilterInput === LIFECYCLE_FILTER.ACTIVE}
+                          key={LIFECYCLE_FILTER.ACTIVE}
+                        >
+                          {LIFECYCLE_FILTER.ACTIVE}
+                        </Menu.Item>
+                        <Menu.Item
+                          data-test-id='deleted-runs-menu-item'
+                          active={this.state.lifecycleFilterInput === LIFECYCLE_FILTER.DELETED}
+                          key={LIFECYCLE_FILTER.DELETED}
+                        >
+                          {LIFECYCLE_FILTER.DELETED}
+                        </Menu.Item>
+                      </Menu>
+                    }
+                  >
+                    <Button>
+                      {this.state.lifecycleFilterInput} <img src={expandIcon} alt='Expand' />
+                    </Button>
+                  </Dropdown>
+                  <span className='model-versions-label'>Linked Models:</span>
+                  <Dropdown
+                    id='ExperimentView-linked-model-button-id'
+                    className='ExperimentView-linked-model-button'
+                    key={this.state.modelVersionInput}
+                    title={this.state.modelVersionInput}
+                    trigger={['click']}
+                    overlay={
+                      <Menu onClick={this.handleModelVersionFilterInput}>
+                        {this.getModelVersionMenuItem(
+                          MODEL_VERSION_FILTER.ALL_RUNS,
+                          'all-runs-menu-item',
+                        )}
+                        {this.getModelVersionMenuItem(
+                          MODEL_VERSION_FILTER.WITH_MODEL_VERSIONS,
+                          'model-versions-runs-menu-item',
+                        )}
+                        {this.getModelVersionMenuItem(
+                          MODEL_VERSION_FILTER.WTIHOUT_MODEL_VERSIONS,
+                          'no-model-versions-runs-menu-item',
+                        )}
+                      </Menu>
+                    }
+                  >
+                    <Button>
+                      {this.state.modelVersionInput} <img src={expandIcon} alt='Expand' />
+                    </Button>
+                  </Dropdown>
+                </div>
+              </div>
+            </CSSTransition>
           </form>
           <div className='ExperimentView-run-buttons'>
             <span className='run-count'>
               Showing {runInfos.length} matching {runInfos.length === 1 ? 'run' : 'runs'}
             </span>
-            <Button className='btn-primary' disabled={compareDisabled} onClick={this.onCompare}>
+            <Button className='compare-button' disabled={compareDisabled} onClick={this.onCompare}>
               Compare
             </Button>
             {this.props.lifecycleFilter === LIFECYCLE_FILTER.ACTIVE ? (
-              <Button disabled={deleteDisabled} onClick={this.onDeleteRun}>
+              <Button
+                className='delete-restore-button'
+                disabled={deleteDisabled}
+                onClick={this.onDeleteRun}
+              >
                 Delete
               </Button>
             ) : null}
@@ -494,7 +623,7 @@ export class ExperimentView extends Component {
                 Restore
               </Button>
             ) : null}
-            <Button onClick={this.onDownloadCsv}>
+            <Button className='csv-button' onClick={this.onDownloadCsv}>
               Download CSV <i className='fas fa-download' />
             </Button>
             <span style={{ float: 'right', marginLeft: 16 }}>
@@ -528,6 +657,7 @@ export class ExperimentView extends Component {
           {this.state.persistedState.showMultiColumns ? (
             <ExperimentRunsTableMultiColumnView2
               experimentId={experiment.experiment_id}
+              modelVersionsByRunUuid={this.props.modelVersionsByRunUuid}
               onSelectionChange={this.handleMultiColumnViewSelectionChange}
               runInfos={this.props.runInfos}
               paramsList={this.props.paramsList}
@@ -539,15 +669,16 @@ export class ExperimentView extends Component {
               categorizedUncheckedKeys={categorizedUncheckedKeys}
               isAllChecked={this.isAllChecked()}
               onSortBy={this.onSortBy}
-              orderByKey={this.props.orderByKey}
+              orderByKey={orderByKey}
               orderByAsc={this.props.orderByAsc}
               runsSelected={this.state.runsSelected}
               runsExpanded={this.state.persistedState.runsExpanded}
               onExpand={this.onExpand}
-              nextPageToken={nextPageToken}
+              numRunsFromLatestSearch={numRunsFromLatestSearch}
               handleLoadMoreRuns={handleLoadMoreRuns}
               loadingMore={loadingMore}
               isLoading={isLoading}
+              nestChildren={nestChildren}
             />
           ) : isLoading ? (
             <Spinner showImmediately />
@@ -555,6 +686,7 @@ export class ExperimentView extends Component {
             <ExperimentRunsTableCompactView
               onCheckbox={this.onCheckbox}
               runInfos={this.props.runInfos}
+              modelVersionsByRunUuid={this.props.modelVersionsByRunUuid}
               // Bagged param and metric keys
               paramKeyList={filteredParamKeys}
               metricKeyList={filteredMetricKeys}
@@ -565,7 +697,7 @@ export class ExperimentView extends Component {
               onCheckAll={this.onCheckAll}
               isAllChecked={this.isAllChecked()}
               onSortBy={this.onSortBy}
-              orderByKey={this.props.orderByKey}
+              orderByKey={orderByKey}
               orderByAsc={this.props.orderByAsc}
               runsSelected={this.state.runsSelected}
               runsExpanded={this.state.persistedState.runsExpanded}
@@ -574,9 +706,10 @@ export class ExperimentView extends Component {
               unbaggedParams={filteredUnbaggedParamKeys}
               onAddBagged={this.addBagged}
               onRemoveBagged={this.removeBagged}
-              nextPageToken={nextPageToken}
+              numRunsFromLatestSearch={numRunsFromLatestSearch}
               handleLoadMoreRuns={handleLoadMoreRuns}
               loadingMore={loadingMore}
+              nestChildren={nestChildren}
             />
           )}
         </div>
@@ -593,6 +726,7 @@ export class ExperimentView extends Component {
     metricKeyFilterInput,
     searchInput,
     lifecycleFilterInput,
+    modelVersionFilterInput,
     orderByKey,
     orderByAsc,
   }) {
@@ -605,6 +739,7 @@ export class ExperimentView extends Component {
       lifecycleFilterInput !== undefined ? lifecycleFilterInput : this.state.lifecycleFilterInput;
     const myOrderByKey = orderByKey !== undefined ? orderByKey : this.props.orderByKey;
     const myOrderByAsc = orderByAsc !== undefined ? orderByAsc : this.props.orderByAsc;
+    const myModelVersionFilterInput = modelVersionFilterInput || MODEL_VERSION_FILTER.ALL_RUNS;
 
     try {
       this.props.onSearch(
@@ -614,6 +749,7 @@ export class ExperimentView extends Component {
         myLifecycleFilterInput,
         myOrderByKey,
         myOrderByAsc,
+        myModelVersionFilterInput,
       );
     } catch (ex) {
       if (ex.errorMessage !== undefined) {
@@ -714,8 +850,12 @@ export class ExperimentView extends Component {
     this.setState({ searchInput: event.target.value });
   }
 
-  onLifecycleFilterInput(newLifecycleInput) {
-    this.setState({ lifecycleFilterInput: newLifecycleInput }, this.onSearch);
+  handleLifecycleFilterInput({ item, key, keyPath, domEvent }) {
+    this.setState({ lifecycleFilterInput: key }, this.onSearch);
+  }
+
+  handleModelVersionFilterInput({ item, key, keyPath, domEvent }) {
+    this.setState({ modelVersionInput: key }, this.onSearch);
   }
 
   onSearch(e) {
@@ -727,12 +867,16 @@ export class ExperimentView extends Component {
       metricKeyFilterInput,
       searchInput,
       lifecycleFilterInput,
+      modelVersionInput,
     } = this.state;
     this.initiateSearch({
-      paramKeyFilterInput,
-      metricKeyFilterInput,
-      searchInput,
-      lifecycleFilterInput,
+      paramKeyFilterInput: paramKeyFilterInput,
+      metricKeyFilterInput: metricKeyFilterInput,
+      searchInput: searchInput,
+      lifecycleFilterInput: lifecycleFilterInput,
+      modelVersionFilterInput: modelVersionInput,
+      orderByKey: null,
+      orderByAsc: null,
     });
   }
 
@@ -749,6 +893,7 @@ export class ExperimentView extends Component {
         metricKeyFilterInput: '',
         searchInput: '',
         lifecycleFilterInput: LIFECYCLE_FILTER.ACTIVE,
+        modelVersionFilterInput: MODEL_VERSION_FILTER.ALL_RUNS,
         orderByKey: null,
         orderByAsc: true,
       });
@@ -870,13 +1015,15 @@ export class ExperimentView extends Component {
 }
 
 export const mapStateToProps = (state, ownProps) => {
-  const { lifecycleFilter } = ownProps;
+  const { lifecycleFilter, modelVersionFilter } = ownProps;
 
   // The runUuids we should serve.
   const { runInfosByUuid } = state.entities;
   const runUuids = Object.values(runInfosByUuid)
     .filter((r) => r.experiment_id === ownProps.experimentId.toString())
     .map((r) => r.run_uuid);
+
+  const { modelVersionsByRunUuid } = state.entities;
 
   const runInfos = runUuids
     .map((run_id) => getRunInfo(run_id, state))
@@ -885,6 +1032,18 @@ export const mapStateToProps = (state, ownProps) => {
         return rInfo.lifecycle_stage === 'active';
       } else {
         return rInfo.lifecycle_stage === 'deleted';
+      }
+    })
+    .filter((rInfo) => {
+      if (modelVersionFilter === MODEL_VERSION_FILTER.ALL_RUNS) {
+        return true;
+      } else if (modelVersionFilter === MODEL_VERSION_FILTER.WITH_MODEL_VERSIONS) {
+        return rInfo.run_uuid in modelVersionsByRunUuid;
+      } else if (modelVersionFilter === MODEL_VERSION_FILTER.WTIHOUT_MODEL_VERSIONS) {
+        return !(rInfo.run_uuid in modelVersionsByRunUuid);
+      } else {
+        console.warn('Invalid input to model version filter - defaulting to showing all runs.');
+        return true;
       }
     });
   const experiment = getExperiment(ownProps.experimentId, state);
@@ -910,6 +1069,7 @@ export const mapStateToProps = (state, ownProps) => {
   const experimentTags = getExperimentTags(experiment.experiment_id, state);
   return {
     runInfos,
+    modelVersionsByRunUuid,
     experiment,
     metricKeyList: Array.from(metricKeysSet.values()).sort(),
     paramKeyList: Array.from(paramKeysSet.values()).sort(),

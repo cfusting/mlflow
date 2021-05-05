@@ -2,6 +2,7 @@ import React from 'react';
 import { Table, Input, Form, Icon, Popconfirm, Button } from 'antd';
 import PropTypes from 'prop-types';
 import { IconButton } from '../../components/IconButton';
+import _ from 'lodash';
 
 import './EditableFormTable.css';
 
@@ -54,8 +55,8 @@ class EditableCell extends React.Component {
 
 export class EditableTable extends React.Component {
   static propTypes = {
-    columns: PropTypes.arrayOf(Object).isRequired,
-    data: PropTypes.arrayOf(Object).isRequired,
+    columns: PropTypes.arrayOf(PropTypes.object).isRequired,
+    data: PropTypes.arrayOf(PropTypes.object).isRequired,
     onSaveEdit: PropTypes.func.isRequired,
     onDelete: PropTypes.func.isRequired,
     form: PropTypes.object.isRequired,
@@ -66,6 +67,10 @@ export class EditableTable extends React.Component {
     this.state = { editingKey: '', isRequestPending: false };
     this.columns = this.initColumns();
   }
+
+  // set table width as sum of columns rather than hard coding a width
+  // see ML-11973
+  getTotalTableWidth = () => _.sumBy(this.columns, 'width');
 
   initColumns = () => [
     ...this.props.columns.map((col) =>
@@ -88,7 +93,7 @@ export class EditableTable extends React.Component {
     {
       title: 'Actions',
       dataIndex: 'operation',
-      width: 100,
+      width: 200,
       render: (text, record) => {
         const { editingKey, isRequestPending } = this.state;
         const editing = this.isEditing(record);
@@ -177,6 +182,8 @@ export class EditableTable extends React.Component {
           size='middle'
           pagination={false}
           locale={{ emptyText: 'No tags found.' }}
+          scroll={{ y: 280 }}
+          style={{ width: this.getTotalTableWidth() }}
         />
       </EditableContext.Provider>
     );

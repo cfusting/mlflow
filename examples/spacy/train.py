@@ -1,9 +1,14 @@
 import random
+from distutils.version import LooseVersion
 
 import spacy
 from spacy.util import minibatch, compounding
 
 import mlflow.spacy
+
+IS_SPACY_VERSION_NEWER_THAN_OR_EQUAL_TO_3_0_0 = LooseVersion(spacy.__version__) >= LooseVersion(
+    "3.0.0"
+)
 
 # training data
 TRAIN_DATA = [
@@ -16,22 +21,22 @@ if __name__ == "__main__":
 
     # create blank model and add ner to the pipeline
     nlp = spacy.blank("en")
-    ner = nlp.create_pipe("ner")
-    nlp.add_pipe(ner, last=True)
+    if IS_SPACY_VERSION_NEWER_THAN_OR_EQUAL_TO_3_0_0:
+        ner = nlp.add_pipe("ner", last=True)
+    else:
+        ner = nlp.create_pipe("ner")
+        nlp.add_pipe(ner, last=True)
 
     # add labels
     for _, annotations in TRAIN_DATA:
         for ent in annotations.get("entities"):
             ner.add_label(ent[2])
 
-    params = {
-        'n_iter':100,
-        'drop': 0.5
-    }
+    params = {"n_iter": 100, "drop": 0.5}
     mlflow.log_params(params)
 
     nlp.begin_training()
-    for itn in range(params['n_iter']):
+    for itn in range(params["n_iter"]):
         random.shuffle(TRAIN_DATA)
         losses = {}
         # batch up the examples using spaCy's minibatch
@@ -41,17 +46,17 @@ if __name__ == "__main__":
             nlp.update(
                 texts,  # batch of texts
                 annotations,  # batch of annotations
-                drop=params['drop'],  # dropout - make it harder to memorise data
+                drop=params["drop"],  # dropout - make it harder to memorise data
                 losses=losses,
             )
         print("Losses", losses)
         mlflow.log_metrics(losses)
 
     # Log the spaCy model using mlflow
-    mlflow.spacy.log_model(spacy_model=nlp, artifact_path='model')
+    mlflow.spacy.log_model(spacy_model=nlp, artifact_path="model")
     model_uri = "runs:/{run_id}/{artifact_path}".format(
-        run_id=mlflow.active_run().info.run_id,
-        artifact_path='model')
+        run_id=mlflow.active_run().info.run_id, artifact_path="model"
+    )
 
     print("Model saved in run %s" % mlflow.active_run().info.run_uuid)
 

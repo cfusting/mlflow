@@ -10,12 +10,14 @@ import Utils from '../../common/utils/Utils';
 import { ErrorCodes } from '../../common/constants';
 import { RunNotFoundView } from './RunNotFoundView';
 import { getUUID } from '../../common/utils/ActionUtils';
+import { Spinner } from '../../common/components/Spinner';
 
 export class RunPageImpl extends Component {
   static propTypes = {
     runUuid: PropTypes.string.isRequired,
     experimentId: PropTypes.string.isRequired,
-    modelVersions: PropTypes.arrayOf(Object),
+    initialSelectedArtifactPath: PropTypes.string,
+    modelVersions: PropTypes.arrayOf(PropTypes.object),
     getRunApi: PropTypes.func.isRequired,
     getExperimentApi: PropTypes.func.isRequired,
     searchModelVersionsApi: PropTypes.func.isRequired,
@@ -45,7 +47,9 @@ export class RunPageImpl extends Component {
   };
 
   renderRunView = (isLoading, shouldRenderError, requests) => {
-    if (shouldRenderError) {
+    if (isLoading) {
+      return <Spinner />;
+    } else if (shouldRenderError) {
       const getRunRequest = Utils.getRequestWithId(requests, this.getRunRequestId);
       if (getRunRequest.error.getErrorCode() === ErrorCodes.RESOURCE_DOES_NOT_EXIST) {
         return <RunNotFoundView runId={this.props.runUuid} />;
@@ -59,6 +63,7 @@ export class RunPageImpl extends Component {
           Routes.getMetricPageRoute([this.props.runUuid], key, this.props.experimentId)
         }
         experimentId={this.props.experimentId}
+        initialSelectedArtifactPath={this.props.initialSelectedArtifactPath}
         modelVersions={this.props.modelVersions}
         handleSetRunTag={this.handleSetRunTag}
       />
@@ -77,11 +82,14 @@ export class RunPageImpl extends Component {
 
 const mapStateToProps = (state, ownProps) => {
   const { match } = ownProps;
-  const runUuid = match.params.runUuid;
-  const experimentId = match.params.experimentId;
+  const { runUuid, experimentId, initialSelectedArtifactPath } = match.params;
+  const { modelVersionsByRunUuid } = state.entities;
+  const modelVersions = modelVersionsByRunUuid ? modelVersionsByRunUuid[runUuid] : null;
   return {
     runUuid,
     experimentId,
+    initialSelectedArtifactPath,
+    modelVersions,
     // so that we re-render the component when the route changes
     key: runUuid + experimentId,
   };

@@ -3,7 +3,9 @@
 mlruns
 ^mlflow-model$
 packrat
-^\.travis\.R$
+^\.run-tests\.R$
+^\.create-test-env\.R$
+^\.spark-version$
 ^README.Rmd$
 ^docs$
 ^model$

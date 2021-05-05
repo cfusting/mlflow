@@ -24,6 +24,8 @@ import {
   isRejectedApi,
   rejected,
 } from '../../common/utils/ActionUtils';
+import { SEARCH_MODEL_VERSIONS } from '../../model-registry/actions';
+import { getProtoField } from '../../model-registry/utils';
 
 export const getExperiments = (state) => {
   return Object.values(state.entities.experimentsById);
@@ -100,6 +102,31 @@ export const runInfosByUuid = (state = {}, action) => {
   }
 };
 
+export const modelVersionsByRunUuid = (state = {}, action) => {
+  switch (action.type) {
+    case fulfilled(SEARCH_MODEL_VERSIONS): {
+      let newState = { ...state };
+      const updatedState = {};
+      if (action.payload) {
+        const modelVersions = action.payload[getProtoField('model_versions')];
+        if (modelVersions) {
+          modelVersions.forEach((model_version) => {
+            if (model_version.run_id in updatedState) {
+              updatedState[model_version.run_id].push(model_version);
+            } else {
+              updatedState[model_version.run_id] = [model_version];
+            }
+          });
+        }
+      }
+      newState = { ...newState, ...updatedState };
+      return newState;
+    }
+    default:
+      return state;
+  }
+};
+
 const amendRunInfosByUuid = (state, runInfo) => {
   return {
     ...state,
@@ -124,7 +151,7 @@ export const paramsByRunUuid = (state = {}, action) => {
   };
   switch (action.type) {
     case fulfilled(GET_RUN_API): {
-      const run = action.payload.run;
+      const { run } = action.payload;
       const runUuid = run.info.run_uuid;
       const params = run.data.params || [];
       const newState = { ...state };
@@ -133,7 +160,7 @@ export const paramsByRunUuid = (state = {}, action) => {
     }
     case fulfilled(SEARCH_RUNS_API):
     case fulfilled(LOAD_MORE_RUNS_API): {
-      const runs = action.payload.runs;
+      const { runs } = action.payload;
       const newState = { ...state };
       if (runs) {
         runs.forEach((rJson) => {
@@ -149,14 +176,7 @@ export const paramsByRunUuid = (state = {}, action) => {
   }
 };
 
-export const getRunTags = (runUuid, state) => {
-  const tags = state.entities.tagsByRunUuid[runUuid];
-  if (tags) {
-    return tags;
-  } else {
-    return {};
-  }
-};
+export const getRunTags = (runUuid, state) => state.entities.tagsByRunUuid[runUuid] || {};
 
 export const getExperimentTags = (experimentId, state) => {
   const tags = state.entities.experimentTagsByExperimentId[experimentId];
@@ -180,7 +200,7 @@ export const tagsByRunUuid = (state = {}, action) => {
     }
     case fulfilled(SEARCH_RUNS_API):
     case fulfilled(LOAD_MORE_RUNS_API): {
-      const runs = action.payload.runs;
+      const { runs } = action.payload;
       const newState = { ...state };
       if (runs) {
         runs.forEach((rJson) => {
@@ -196,7 +216,7 @@ export const tagsByRunUuid = (state = {}, action) => {
       return amendTagsByRunUuid(state, [tag], action.meta.runUuid);
     }
     case fulfilled(DELETE_TAG_API): {
-      const runUuid = action.meta.runUuid;
+      const { runUuid } = action.meta;
       const oldTags = state[runUuid] ? state[runUuid] : {};
       const newTags = _.omit(oldTags, action.meta.key);
       if (Object.keys(newTags).length === 0) {
@@ -277,7 +297,7 @@ export const artifactsByRunUuid = (state = {}, action) => {
   switch (action.type) {
     case fulfilled(LIST_ARTIFACTS_API): {
       const queryPath = action.meta.path;
-      const runUuid = action.meta.runUuid;
+      const { runUuid } = action.meta;
       let artifactNode = state[runUuid] || new ArtifactNode(true);
       // Make deep copy.
       artifactNode = artifactNode.deepCopy();
@@ -299,7 +319,14 @@ export const artifactsByRunUuid = (state = {}, action) => {
           curArtifactNode = curArtifactNode.children[part];
         });
         // Then set children on that artifact node.
-        curArtifactNode.setChildren(files);
+        // ML-12477: This can throw error if we supply an invalid queryPath in the URL.
+        try {
+          if (curArtifactNode.fileInfo.is_dir) {
+            curArtifactNode.setChildren(files);
+          }
+        } catch (err) {
+          console.error(err);
+        }
       }
       return {
         ...state,
@@ -340,6 +367,7 @@ export const entities = combineReducers({
   experimentTagsByExperimentId,
   artifactsByRunUuid,
   artifactRootUriByRunUuid,
+  modelVersionsByRunUuid,
   ...modelRegistryReducers,
 });
 

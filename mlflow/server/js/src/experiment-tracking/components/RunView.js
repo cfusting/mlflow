@@ -14,11 +14,12 @@ import Utils from '../../common/utils/Utils';
 import { NOTE_CONTENT_TAG, NoteInfo } from '../utils/NoteUtils';
 import { BreadcrumbTitle } from './BreadcrumbTitle';
 import { RenameRunModal } from './modals/RenameRunModal';
-import EditableTagsTableView from './EditableTagsTableView';
-import { Icon, Descriptions } from 'antd';
+import EditableTagsTableView from '../../common/components/EditableTagsTableView';
+import { Icon, Descriptions, message } from 'antd';
 import { CollapsibleSection } from '../../common/components/CollapsibleSection';
 import { EditableNote } from '../../common/components/EditableNote';
 import { IconButton } from '../../common/components/IconButton';
+import { setTagApi, deleteTagApi } from '../actions';
 
 export class RunViewImpl extends Component {
   static propTypes = {
@@ -26,6 +27,7 @@ export class RunViewImpl extends Component {
     run: PropTypes.object.isRequired,
     experiment: PropTypes.instanceOf(Experiment).isRequired,
     experimentId: PropTypes.string.isRequired,
+    initialSelectedArtifactPath: PropTypes.string,
     params: PropTypes.object.isRequired,
     tags: PropTypes.object.isRequired,
     latestMetrics: PropTypes.object.isRequired,
@@ -33,12 +35,16 @@ export class RunViewImpl extends Component {
     runDisplayName: PropTypes.string.isRequired,
     runName: PropTypes.string.isRequired,
     handleSetRunTag: PropTypes.func.isRequired,
+    setTagApi: PropTypes.func.isRequired,
+    deleteTagApi: PropTypes.func.isRequired,
+    modelVersions: PropTypes.arrayOf(PropTypes.object),
   };
 
   state = {
     showRunRenameModal: false,
     showNoteEditor: false,
     showTags: Utils.getVisibleTagValues(this.props.tags).length > 0,
+    isTagsRequestPending: false,
   };
 
   componentDidMount() {
@@ -52,6 +58,48 @@ export class RunViewImpl extends Component {
 
   hideRenameRunModal = () => {
     this.setState({ showRunRenameModal: false });
+  };
+
+  saveFormRef = (formRef) => {
+    this.formRef = formRef;
+  };
+
+  handleAddTag = (e) => {
+    e.preventDefault();
+    const { form } = this.formRef.props;
+    const { runUuid } = this.props;
+    form.validateFields((err, values) => {
+      if (!err) {
+        this.setState({ isTagsRequestPending: true });
+        this.props
+          .setTagApi(runUuid, values.name, values.value)
+          .then(() => {
+            this.setState({ isTagsRequestPending: false });
+            form.resetFields();
+          })
+          .catch((ex) => {
+            this.setState({ isTagsRequestPending: false });
+            console.error(ex);
+            message.error('Failed to add tag. Error: ' + ex.getUserVisibleError());
+          });
+      }
+    });
+  };
+
+  handleSaveEdit = ({ name, value }) => {
+    const { runUuid } = this.props;
+    return this.props.setTagApi(runUuid, name, value).catch((ex) => {
+      console.error(ex);
+      message.error('Failed to set tag. Error: ' + ex.getUserVisibleError());
+    });
+  };
+
+  handleDeleteTag = ({ name }) => {
+    const { runUuid } = this.props;
+    return this.props.deleteTagApi(runUuid, name).catch((ex) => {
+      console.error(ex);
+      message.error('Failed to delete tag. Error: ' + ex.getUserVisibleError());
+    });
   };
 
   getRunCommand() {
@@ -101,8 +149,17 @@ export class RunViewImpl extends Component {
   }
 
   render() {
-    const { runUuid, run, params, tags, latestMetrics, getMetricPagePath } = this.props;
-    const { showNoteEditor } = this.state;
+    const {
+      runUuid,
+      run,
+      params,
+      tags,
+      latestMetrics,
+      getMetricPagePath,
+      initialSelectedArtifactPath,
+      modelVersions,
+    } = this.props;
+    const { showNoteEditor, isTagsRequestPending } = this.state;
     const noteInfo = NoteInfo.fromTags(tags);
     const startTime = run.getStartTime() ? Utils.formatTimestamp(run.getStartTime()) : '(unknown)';
     const duration =
@@ -154,8 +211,8 @@ export class RunViewImpl extends Component {
         <Descriptions className='metadata-list'>
           <Descriptions.Item label='Date'>{startTime}</Descriptions.Item>
           <Descriptions.Item label='Source'>
-            {Utils.renderSourceTypeIcon(Utils.getSourceType(tags))}
-            {Utils.renderSource(tags, queryParams)}
+            {Utils.renderSourceTypeIcon(tags)}
+            {Utils.renderSource(tags, queryParams, runUuid)}
           </Descriptions.Item>
           {Utils.getSourceVersion(tags) ? (
             <Descriptions.Item label='Git Commit'>
@@ -216,6 +273,7 @@ export class RunViewImpl extends Component {
           </CollapsibleSection>
           <CollapsibleSection title='Parameters'>
             <HtmlTableView
+              data-test-id='params-table'
               columns={['Name', 'Value']}
               values={getParamValues(params)}
               styles={tableStyles}
@@ -223,16 +281,29 @@ export class RunViewImpl extends Component {
           </CollapsibleSection>
           <CollapsibleSection title='Metrics'>
             <HtmlTableView
+              data-test-id='metrics-table'
               columns={['Name', 'Value']}
               values={getMetricValues(latestMetrics, getMetricPagePath)}
               styles={tableStyles}
             />
           </CollapsibleSection>
           <CollapsibleSection title='Tags'>
-            <EditableTagsTableView runUuid={runUuid} tags={tags} />
+            <EditableTagsTableView
+              wrappedComponentRef={this.saveFormRef}
+              handleAddTag={this.handleAddTag}
+              handleDeleteTag={this.handleDeleteTag}
+              handleSaveEdit={this.handleSaveEdit}
+              tags={tags}
+              isRequestPending={isTagsRequestPending}
+            />
           </CollapsibleSection>
           <CollapsibleSection title='Artifacts'>
-            <ArtifactPage runUuid={runUuid} />
+            <ArtifactPage
+              runUuid={runUuid}
+              modelVersions={modelVersions}
+              initialSelectedArtifactPath={initialSelectedArtifactPath}
+              runTags={tags}
+            />
           </CollapsibleSection>
         </div>
       </div>
@@ -260,8 +331,9 @@ const mapStateToProps = (state, ownProps) => {
   const runName = Utils.getRunName(tags, runUuid);
   return { run, experiment, params, tags, latestMetrics, runDisplayName, runName };
 };
+const mapDispatchToProps = { setTagApi, deleteTagApi };
 
-export const RunView = connect(mapStateToProps)(RunViewImpl);
+export const RunView = connect(mapStateToProps, mapDispatchToProps)(RunViewImpl);
 
 // Private helper functions.
 
@@ -274,14 +346,13 @@ const getParamValues = (params) => {
 const getMetricValues = (latestMetrics, getMetricPagePath) => {
   return Object.values(latestMetrics)
     .sort()
-    .map((m) => {
-      const key = m.key;
+    .map(({ key, value }) => {
       return [
         <Link to={getMetricPagePath(key)} title='Plot chart'>
           {key}
           <i className='fas fa-chart-line' style={{ paddingLeft: '6px' }} />
         </Link>,
-        <span title={m.value}>{Utils.formatMetric(m.value)}</span>,
+        <span title={value}>{Utils.formatMetric(value)}</span>,
       ];
     });
 };

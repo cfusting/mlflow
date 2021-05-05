@@ -8,11 +8,13 @@ H20 (native) format
     Produced for use by generic pyfunc-based deployment tools and batch inference.
 """
 import os
+import warnings
 import yaml
 
 import mlflow
 from mlflow import pyfunc
 from mlflow.models import Model
+from mlflow.models.model import MLMODEL_FILE_NAME
 from mlflow.models.signature import ModelSignature
 from mlflow.models.utils import ModelInputExample, _save_example
 from mlflow.tracking.artifact_utils import _download_artifact_from_uri
@@ -31,14 +33,20 @@ def get_default_conda_env():
 
     return _mlflow_conda_env(
         additional_conda_deps=None,
-        additional_pip_deps=[
-            "h2o=={}".format(h2o.__version__),
-        ],
-        additional_conda_channels=None)
+        additional_pip_deps=["h2o=={}".format(h2o.__version__)],
+        additional_conda_channels=None,
+    )
 
 
-def save_model(h2o_model, path, conda_env=None, mlflow_model=None, settings=None,
-               signature: ModelSignature = None, input_example: ModelInputExample = None):
+def save_model(
+    h2o_model,
+    path,
+    conda_env=None,
+    mlflow_model=None,
+    settings=None,
+    signature: ModelSignature = None,
+    input_example: ModelInputExample = None,
+):
     """
     Save an H2O model to a path on the local file system.
 
@@ -101,16 +109,23 @@ def save_model(h2o_model, path, conda_env=None, mlflow_model=None, settings=None
         _save_example(mlflow_model, input_example, path)
 
     # Save h2o-model
-    h2o_save_location = h2o.save_model(model=h2o_model, path=model_data_path, force=True)
+    if hasattr(h2o, "download_model"):
+        h2o_save_location = h2o.download_model(model=h2o_model, path=model_data_path)
+    else:
+        warnings.warn(
+            "If your cluster is remote, H2O may not store the model correctly. "
+            "Please upgrade H2O version to a newer version"
+        )
+        h2o_save_location = h2o.save_model(model=h2o_model, path=model_data_path, force=True)
     model_file = os.path.basename(h2o_save_location)
 
     # Save h2o-settings
     if settings is None:
         settings = {}
-    settings['full_file'] = h2o_save_location
-    settings['model_file'] = model_file
-    settings['model_dir'] = model_data_path
-    with open(os.path.join(model_data_path, "h2o.yaml"), 'w') as settings_file:
+    settings["full_file"] = h2o_save_location
+    settings["model_file"] = model_file
+    settings["model_dir"] = model_data_path
+    with open(os.path.join(model_data_path, "h2o.yaml"), "w") as settings_file:
         yaml.safe_dump(settings, stream=settings_file)
 
     conda_env_subpath = "conda.yaml"
@@ -122,15 +137,22 @@ def save_model(h2o_model, path, conda_env=None, mlflow_model=None, settings=None
     with open(os.path.join(path, conda_env_subpath), "w") as f:
         yaml.safe_dump(conda_env, stream=f, default_flow_style=False)
 
-    pyfunc.add_to_model(mlflow_model, loader_module="mlflow.h2o",
-                        data=model_data_subpath, env=conda_env_subpath)
+    pyfunc.add_to_model(
+        mlflow_model, loader_module="mlflow.h2o", data=model_data_subpath, env=conda_env_subpath
+    )
     mlflow_model.add_flavor(FLAVOR_NAME, h2o_version=h2o.__version__, data=model_data_subpath)
-    mlflow_model.save(os.path.join(path, "MLmodel"))
+    mlflow_model.save(os.path.join(path, MLMODEL_FILE_NAME))
 
 
-def log_model(h2o_model, artifact_path, conda_env=None, registered_model_name=None,
-              signature: ModelSignature=None, input_example: ModelInputExample=None,
-              **kwargs):
+def log_model(
+    h2o_model,
+    artifact_path,
+    conda_env=None,
+    registered_model_name=None,
+    signature: ModelSignature = None,
+    input_example: ModelInputExample = None,
+    **kwargs
+):
     """
     Log an H2O model as an MLflow artifact for the current run.
 
@@ -180,11 +202,16 @@ def log_model(h2o_model, artifact_path, conda_env=None, registered_model_name=No
 
     :param kwargs: kwargs to pass to ``h2o.save_model`` method.
     """
-    Model.log(artifact_path=artifact_path, flavor=mlflow.h2o,
-              registered_model_name=registered_model_name,
-              h2o_model=h2o_model, conda_env=conda_env,
-              signature=signature, input_example=input_example,
-              **kwargs)
+    Model.log(
+        artifact_path=artifact_path,
+        flavor=mlflow.h2o,
+        registered_model_name=registered_model_name,
+        h2o_model=h2o_model,
+        conda_env=conda_env,
+        signature=signature,
+        input_example=input_example,
+        **kwargs
+    )
 
 
 def _load_model(path, init=False):
@@ -196,7 +223,18 @@ def _load_model(path, init=False):
     if init:
         h2o.init(**(params["init"] if "init" in params else {}))
         h2o.no_progress()
-    return h2o.load_model(os.path.join(path, params['model_file']))
+
+    model_path = os.path.join(path, params["model_file"])
+    if hasattr(h2o, "upload_model"):
+        model = h2o.upload_model(model_path)
+    else:
+        warnings.warn(
+            "If your cluster is remote, H2O may not load the model correctly. "
+            "Please upgrade H2O version to a newer version"
+        )
+        model = h2o.load_model(model_path)
+
+    return model
 
 
 class _H2OModelWrapper:

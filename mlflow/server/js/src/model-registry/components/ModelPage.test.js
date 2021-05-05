@@ -24,7 +24,7 @@ describe('ModelPage', () => {
     minimalProps = {
       match: {
         params: {
-          modelName: 'Model A',
+          modelName: encodeURIComponent('Model A'),
         },
       },
       history: {
@@ -43,12 +43,11 @@ describe('ModelPage', () => {
         },
         modelVersionsByModel: {
           'Model A': {
-            '1': mockRegisteredModelDetailed(
+            '1': mockModelVersionDetailed(
               'Model A',
               1,
               Stages.PRODUCTION,
               ModelVersionStatus.READY,
-              [],
             ),
           },
         },

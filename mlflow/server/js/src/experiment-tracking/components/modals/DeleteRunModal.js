@@ -14,7 +14,7 @@ export class DeleteRunModalImpl extends Component {
   static propTypes = {
     isOpen: PropTypes.bool.isRequired,
     onClose: PropTypes.func.isRequired,
-    selectedRunIds: PropTypes.arrayOf(String).isRequired,
+    selectedRunIds: PropTypes.arrayOf(PropTypes.string).isRequired,
     openErrorModal: PropTypes.func.isRequired,
     deleteRunApi: PropTypes.func.isRequired,
   };
@@ -47,9 +47,7 @@ export class DeleteRunModalImpl extends Component {
             {process.env.SHOW_GDPR_PURGING_MESSAGES === 'true' ? (
               <p>
                 Deleted runs are restorable for 30 days, after which they are purged along with
-                associated metrics, params and tags.
-                <br />
-                Artifacts are not automatically purged and must be manually deleted.
+                associated metrics, params, tags, and artifacts.
               </p>
             ) : (
               ''

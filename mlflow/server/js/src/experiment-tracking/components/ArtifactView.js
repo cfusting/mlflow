@@ -10,7 +10,7 @@ import {
 import { ArtifactNode as ArtifactUtils, ArtifactNode } from '../utils/ArtifactUtils';
 import { decorators, Treebeard } from 'react-treebeard';
 import bytes from 'bytes';
-import RegisterModelButton from '../../model-registry/components/RegisterModelButton';
+import { RegisterModelButton } from '../../model-registry/components/RegisterModelButton';
 import ShowArtifactPage, { getSrc } from './artifact-view-components/ShowArtifactPage';
 import {
   ModelVersionStatus,
@@ -28,16 +28,20 @@ import spinner from '../../common/static/mlflow-spinner.png';
 import { getArtifactRootUri, getArtifacts } from '../reducers/Reducers';
 import { getAllModelVersions } from '../../model-registry/reducers';
 import { listArtifactsApi } from '../actions';
+import { MLMODEL_FILE_NAME } from '../constants';
 
 export class ArtifactViewImpl extends Component {
   static propTypes = {
     runUuid: PropTypes.string.isRequired,
+    initialSelectedArtifactPath: PropTypes.string,
     // The root artifact node.
     artifactNode: PropTypes.instanceOf(ArtifactNode).isRequired,
     artifactRootUri: PropTypes.string.isRequired,
     listArtifactsApi: PropTypes.func.isRequired,
     modelVersionsBySource: PropTypes.object.isRequired,
     handleActiveNodeChange: PropTypes.func.isRequired,
+    runTags: PropTypes.object,
+    modelVersions: PropTypes.arrayOf(PropTypes.object),
   };
 
   state = {
@@ -46,21 +50,27 @@ export class ArtifactViewImpl extends Component {
     requestedNodeIds: new Set(),
   };
 
-  renderModelVersionInfoSection() {
-    const { runUuid, modelVersionsBySource } = this.props;
+  getExistingModelVersions() {
+    const { modelVersionsBySource } = this.props;
+    const activeNodeRealPath = Utils.normalize(this.getActiveNodeRealPath());
+    return modelVersionsBySource[activeNodeRealPath];
+  }
+
+  renderRegisterModelButton() {
+    const { runUuid } = this.props;
     const { activeNodeId } = this.state;
     const activeNodeRealPath = this.getActiveNodeRealPath();
-    const existingModelVersions = modelVersionsBySource[activeNodeRealPath];
-
-    return existingModelVersions ? (
-      <ModelVersionInfoSection modelVersion={_.last(existingModelVersions)} />
-    ) : (
+    return (
       <RegisterModelButton
         runUuid={runUuid}
         modelPath={activeNodeRealPath}
         disabled={activeNodeId === undefined}
       />
     );
+  }
+
+  renderModelVersionInfoSection(existingModelVersions) {
+    return <ModelVersionInfoSection modelVersion={_.last(existingModelVersions)} />;
   }
 
   renderPathAndSizeInfo() {
@@ -89,16 +99,23 @@ export class ArtifactViewImpl extends Component {
   }
 
   renderArtifactInfo() {
+    const existingModelVersions = this.getExistingModelVersions();
+    let toRender;
+    if (existingModelVersions && Utils.isModelRegistryEnabled()) {
+      // note that this case won't trigger for files inside a registered model/model version folder
+      // React searches for existing model versions under the path of the file, which won't exist.
+      toRender = this.renderModelVersionInfoSection(existingModelVersions);
+    } else if (this.activeNodeCanBeRegistered() && Utils.isModelRegistryEnabled()) {
+      toRender = this.renderRegisterModelButton();
+    } else if (this.activeNodeIsDirectory()) {
+      toRender = null;
+    } else {
+      toRender = this.renderDownloadLink();
+    }
     return (
       <div className='artifact-info'>
         {this.renderPathAndSizeInfo()}
-        <div className='artifact-info-right'>
-          {this.activeNodeIsDirectory()
-            ? Utils.isModelRegistryEnabled()
-              ? this.renderModelVersionInfoSection()
-              : null
-            : this.renderDownloadLink()}
-        </div>
+        <div className='artifact-info-right'>{toRender}</div>
       </div>
     );
   }
@@ -122,7 +139,7 @@ export class ArtifactViewImpl extends Component {
   };
 
   getTreebeardData = (artifactNode) => {
-    const isRoot = artifactNode.isRoot;
+    const { isRoot } = artifactNode;
     if (isRoot) {
       if (artifactNode.children) {
         return Object.values(artifactNode.children).map((c) => this.getTreebeardData(c));
@@ -138,7 +155,7 @@ export class ArtifactViewImpl extends Component {
     let active;
 
     if (artifactNode.fileInfo) {
-      const path = artifactNode.fileInfo.path;
+      const { path } = artifactNode.fileInfo;
       id = path;
       name = getBasename(path);
     }
@@ -194,6 +211,43 @@ export class ArtifactViewImpl extends Component {
     }
   }
 
+  activeNodeCanBeRegistered() {
+    if (this.state.activeNodeId) {
+      const node = ArtifactUtils.findChild(this.props.artifactNode, this.state.activeNodeId);
+      if (node && node.children && MLMODEL_FILE_NAME in node.children) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  componentWillMount() {
+    if (this.props.initialSelectedArtifactPath) {
+      const artifactPathParts = this.props.initialSelectedArtifactPath.split('/');
+      if (artifactPathParts) {
+        try {
+          // Check if valid artifactId was supplied in URL. If not, don't select
+          // or expand anything.
+          ArtifactUtils.findChild(this.props.artifactNode, this.props.initialSelectedArtifactPath);
+        } catch (err) {
+          console.error(err);
+          return;
+        }
+      }
+      let pathSoFar = '';
+      const toggledArtifactState = {
+        activeNodeId: this.props.initialSelectedArtifactPath,
+        toggledNodeIds: {},
+      };
+      artifactPathParts.forEach((part) => {
+        pathSoFar += part;
+        toggledArtifactState['toggledNodeIds'][pathSoFar] = true;
+        pathSoFar += '/';
+      });
+      this.setState(toggledArtifactState);
+    }
+  }
+
   componentDidUpdate(prevProps, prevState) {
     const { activeNodeId } = this.state;
     if (prevState.activeNodeId !== activeNodeId) {
@@ -218,7 +272,13 @@ export class ArtifactViewImpl extends Component {
           </div>
           <div className='artifact-right'>
             {this.state.activeNodeId ? this.renderArtifactInfo() : null}
-            <ShowArtifactPage runUuid={this.props.runUuid} path={this.state.activeNodeId} />
+            <ShowArtifactPage
+              runUuid={this.props.runUuid}
+              path={this.state.activeNodeId}
+              runTags={this.props.runTags}
+              artifactRootUri={this.props.artifactRootUri}
+              modelVersions={this.props.modelVersions}
+            />
           </div>
         </div>
       </div>
@@ -231,7 +291,10 @@ const mapStateToProps = (state, ownProps) => {
   const { apis } = state;
   const artifactNode = getArtifacts(runUuid, state);
   const artifactRootUri = getArtifactRootUri(runUuid, state);
-  const modelVersionsBySource = _.groupBy(getAllModelVersions(state), 'source');
+  const modelVersionsWithNormalizedSource = _.flatMap(getAllModelVersions(state), (version) => {
+    return { ...version, source: Utils.normalize(version.source) };
+  });
+  const modelVersionsBySource = _.groupBy(modelVersionsWithNormalizedSource, 'source');
   return { artifactNode, artifactRootUri, modelVersionsBySource, apis };
 };
 
@@ -396,7 +459,7 @@ decorators.Header = ({ style, node }) => {
     : { marginRight: '5px', marginLeft: '19px' };
 
   return (
-    <div style={style.base}>
+    <div style={style.base} data-test-id='artifact-tree-node' artifact-name={node.name}>
       <div style={style.title}>
         <i className={iconClass} style={iconStyle} />
         {node.name}

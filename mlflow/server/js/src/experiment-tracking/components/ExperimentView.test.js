@@ -22,33 +22,36 @@ beforeEach(() => {
   onSearchSpy = jest.fn();
 });
 
-const getExperimentViewMock = () => {
-  return shallow(
-    <ExperimentView
-      onSearch={onSearchSpy}
-      runInfos={[]}
-      experiment={Fixtures.createExperiment()}
-      history={[]}
-      paramKeyList={[]}
-      metricKeyList={[]}
-      paramsList={[]}
-      metricsList={[]}
-      tagsList={[]}
-      experimentTags={{}}
-      paramKeyFilter={new KeyFilter('')}
-      metricKeyFilter={new KeyFilter('')}
-      lifecycleFilter={LIFECYCLE_FILTER.ACTIVE}
-      searchInput={''}
-      searchRunsError={''}
-      isLoading
-      loadingMore={false}
-      handleLoadMoreRuns={jest.fn()}
-      orderByKey={null}
-      orderByAsc={false}
-      setExperimentTagApi={jest.fn()}
-      location={{ pathname: '/' }}
-    />,
-  );
+const getDefaultExperimentViewProps = () => {
+  return {
+    onSearch: onSearchSpy,
+    runInfos: [],
+    experiment: Fixtures.createExperiment(),
+    history: [],
+    paramKeyList: [],
+    metricKeyList: [],
+    paramsList: [],
+    metricsList: [],
+    tagsList: [],
+    experimentTags: {},
+    paramKeyFilter: new KeyFilter(''),
+    metricKeyFilter: new KeyFilter(''),
+    lifecycleFilter: LIFECYCLE_FILTER.ACTIVE,
+    searchInput: '',
+    searchRunsError: '',
+    isLoading: true,
+    loadingMore: false,
+    handleLoadMoreRuns: jest.fn(),
+    orderByKey: null,
+    orderByAsc: false,
+    setExperimentTagApi: jest.fn(),
+    location: { pathname: '/' },
+  };
+};
+
+const getExperimentViewMock = (componentProps = {}) => {
+  const mergedProps = { ...getDefaultExperimentViewProps(), ...componentProps };
+  return shallow(<ExperimentView {...mergedProps} />);
 };
 
 test(`Clearing filter state calls search handler with correct arguments`, () => {
@@ -68,10 +71,24 @@ test('Entering search input updates component state', () => {
   wrapper.instance().setState = jest.fn();
   // Test entering search input
   wrapper
-    .find('.ExperimentView-search-input input')
+    .find('.ExperimentView-searchBox')
     .first()
     .simulate('change', { target: { value: 'search input string' } });
   expect(wrapper.instance().setState).toBeCalledWith({ searchInput: 'search input string' });
+});
+
+test('Onboarding alert shows', () => {
+  const wrapper = getExperimentViewMock();
+  expect(wrapper.find('Alert')).toHaveLength(1);
+});
+
+test('Onboarding alert does not show if disabled', () => {
+  const wrapper = getExperimentViewMock();
+  const instance = wrapper.instance();
+  instance.setState({
+    showOnboardingHelper: false,
+  });
+  expect(wrapper.find('Alert')).toHaveLength(0);
 });
 
 test('ExperimentView will show spinner if isLoading prop is true', () => {
